@@ -1,5 +1,16 @@
 
-import { CostCalculationResult, ProBonoAnalysis } from './types-cost-model';
+import { CostCalculationResult, ProBonoAnalysis } from './types/cost-model';
+
+// =====================================================================
+// VECTOR TYPES
+// =====================================================================
+
+export interface VectorChunk {
+  id: string;
+  text: string;
+  embedding: number[];
+  type: 'summary' | 'entity' | 'raw';
+}
 
 // =====================================================================
 // ANALYSIS TYPES (From Gemini Service)
@@ -36,24 +47,6 @@ export interface Skill {
   justification: string;
 }
 
-// Istanbul Protocol Specific Types
-export type IstanbulConsistencyLevel = 
-  | 'Not Consistent' 
-  | 'Consistent' 
-  | 'Highly Consistent' 
-  | 'Typical of' 
-  | 'Diagnostic of';
-
-export interface IstanbulProtocolAssessment {
-  applied: boolean;
-  consistencyLevel: IstanbulConsistencyLevel;
-  physicalEvidenceFound: boolean;
-  psychologicalEvidenceFound: boolean;
-  retraumatizationRisk: 'Low' | 'Medium' | 'High';
-  gapsIdentified: string[];
-  complianceStatement: string;
-}
-
 export interface QualityAudit {
   strengths: string[];
   weaknesses: string[];
@@ -64,8 +57,6 @@ export interface QualityAudit {
   hcdScore?: number; // 0-100 Human-Centred Design Score
   victimCentricity?: string; // Bewertung der Opferzentrierung
   accessibility?: string; // Bewertung der Verständlichkeit
-  // Istanbul Protocol Integration
-  istanbulProtocol?: IstanbulProtocolAssessment;
 }
 
 export interface RecommendationLetter {
@@ -79,7 +70,7 @@ export interface TimelineEvent {
   date: string;
   description: string;
   source: string;
-  type: 'Incident' | 'Procedural' | 'Context' | 'Legal' | 'Medical' | 'Corruption';
+  type: 'Incident' | 'Procedural' | 'Context' | 'Legal' | 'Medical';
 }
 
 export interface ValueMetrics {
@@ -87,6 +78,9 @@ export interface ValueMetrics {
   stateCostComparison: number;
   socialImpactScore: number;
   democraticContribution: string;
+  stateSavings?: number;
+  carbonSavedKg?: number;
+  paperSavedSheets?: number;
 }
 
 export interface DeepDiveResult {
@@ -98,6 +92,7 @@ export interface DeepDiveResult {
 }
 
 // Entity & Intelligence Types
+/* Ensured Entity is exported to resolve Module has no exported member error in EntityGraph */
 export interface Entity {
   name: string;
   type: 'Person' | 'Organization' | 'Location' | 'Event' | 'Date';
@@ -119,15 +114,6 @@ export interface DigitalSignature {
   verified: boolean;
 }
 
-// Vector Store Types (New for Persistence)
-export interface VectorChunk {
-  id: string;
-  text: string;
-  embedding: number[];
-  type: 'summary' | 'entity' | 'finding' | 'context' | 'raw';
-  sourcePage?: number;
-}
-
 // HURIDOCS Classification
 export interface HuridocsClassification {
   violations: string[];
@@ -145,15 +131,10 @@ export interface StrategicAssessment {
 }
 
 // PESTEL Analysis
-export type PestelImpactScope = 'Immediate' | 'Systemic' | 'Precedent';
-export type MaslowNeedType = 'Physiological' | 'Safety' | 'Social' | 'Esteem' | 'Self-Actualization';
-
 export interface PestelFactor {
   category: 'Political' | 'Economic' | 'Social' | 'Technological' | 'Environmental' | 'Legal';
   factor: string;
   impact: 'Positive' | 'Negative' | 'Neutral';
-  impactScope?: PestelImpactScope;
-  maslowNeeds?: MaslowNeedType[];
   implication: string; // Auswirkung auf die Arbeit
 }
 
@@ -173,33 +154,19 @@ export interface ComplianceMetric {
   finding: string;
 }
 
-// Corruption Analysis (UNCAC)
-export interface CorruptionFlag {
-  indicator: string;
-  severity: 'High' | 'Medium' | 'Low';
-  uncacReference?: string; // e.g. "Art. 15 Bribery"
-  context: string;
+// Adversarial Audit (New)
+export interface AdversarialAudit {
+  weaknesses: string[];
+  counterArguments: string[];
+  legalLoopholes: string[];
+  evidenceGaps: string[];
+  overallCritique: string;
 }
 
-export interface CorruptionAnalysis {
-  detected: boolean;
-  redFlags: CorruptionFlag[];
-  riskAssessment: string;
-  recommendedDueDiligence: string[];
-}
-
-// Web Grounding Types
-export interface GroundingSource {
-  title: string;
-  uri: string;
-}
-
-export interface WebVerificationResult {
-  query: string;
-  analysis: string;
-  missingInfoFilled: string[];
-  sources: GroundingSource[];
-  timestamp: string;
+// Radbruch 5D (Hard Law Check)
+export interface RadbruchCheck {
+  overallHardLawFlag: 'red' | 'yellow' | 'green';
+  redFlagReason?: string;
 }
 
 export interface QuickScanResult {
@@ -207,14 +174,6 @@ export interface QuickScanResult {
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
   keywords: string[];
   estimatedComplexity?: 'Simple' | 'Moderate' | 'Complex' | 'Highly Complex';
-}
-
-// FIX: Define missing AdversarialFinding interface used in AnalysisResult
-export interface AdversarialFinding {
-  argument: string;
-  weakness: string;
-  counterStrategy: string;
-  severity: 'High' | 'Medium' | 'Low';
 }
 
 export interface AnalysisResult {
@@ -249,16 +208,15 @@ export interface AnalysisResult {
   pestel?: PestelFactor[];
   maslow?: MaslowLevel[];
 
-  // Adversarial Audit
-  adversarialAudit?: AdversarialFinding[];
-
-  // Compliance & Corruption
+  // Compliance (New)
   complianceAnalysis?: ComplianceMetric[];
-  corruptionAnalysis?: CorruptionAnalysis; 
-  
-  // Web Verification
-  webVerification?: WebVerificationResult[];
 
+  // Adversarial Audit (New)
+  adversarialAudit?: AdversarialAudit;
+
+  // Radbruch 5D
+  radbruch5D?: RadbruchCheck;
+  
   // Cost Model Integration
   detailedCostBreakdown?: CostCalculationResult;
   proBonoAnalysis?: ProBonoAnalysis;
@@ -279,9 +237,7 @@ export interface DocumentCase {
   error?: string;
   totalFees: number;
   rawText?: string; 
-  fileHash?: DigitalSignature; 
-  
-  // Persistent Vector Embeddings
+  fileHash?: DigitalSignature;
   vectorChunks?: VectorChunk[];
 }
 
@@ -289,7 +245,7 @@ export interface DocumentCase {
 // UI TYPES
 // =====================================================================
 
-export type ViewMode = 'dashboard' | 'cases' | 'analysis' | 'calculator' | 'costs' | 'intelligence' | 'vault' | 'reports' | 'docs';
+export type ViewMode = 'dashboard' | 'cases' | 'analysis' | 'calculator' | 'costs' | 'intelligence' | 'vault' | 'reports' | 'docs' | 'roi';
 
 export interface DocEntry {
   id: string;
@@ -303,7 +259,6 @@ export interface DocEntry {
   total: number;
   formula?: string;
   formulaExplanation?: string;
-  sourceComplexity?: string;
 }
 
 export interface CalculationResult {
@@ -318,6 +273,7 @@ export interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
   timestamp: number;
+  // added to fix possible issues
 }
 
 // Report Types for ReportView Component
@@ -342,6 +298,18 @@ export interface AnalysisReport {
   executiveSummary: string;
   items: AnalysisReportItem[];
   standardsUsed: string[];
+  portfolio: {
+    proBonoValue: number;
+    jvegReimbursable: number;
+    stateSavings: number;
+    stateInternalCost: number;
+    violationsCountTotal: number;
+    mainRiskCategory: string;
+  };
+  reportMeta: {
+    portfolioRiskScore: number;
+  };
+  cases: any[]; // Simplified for type file
 }
 
 // =====================================================================

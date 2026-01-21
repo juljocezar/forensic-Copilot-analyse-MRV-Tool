@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { CostCalculationResult } from '../types-cost-model';
+import { CostCalculationResult } from '../types/cost-model';
 import { Card } from './ui/Card';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -24,36 +25,28 @@ export const CostBreakdown: React.FC<CostBreakdownProps> = ({ result }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div>
           <h4 className="text-white font-bold mb-4">Kostenverteilung</h4>
-          <div className="bg-slate-900/50 rounded-lg flex flex-col h-64">
-            <div className="flex-1 w-full" style={{ minHeight: '200px' }}>
-              {data.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%" minHeight={200}>
-                  <PieChart>
-                    <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                      {data.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
-                      formatter={(value: number) => value.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-full text-gray-500 text-sm">Keine Kostendaten verfügbar</div>
-              )}
-            </div>
-            {data.length > 0 && (
-              <div className="flex flex-wrap gap-4 justify-center py-4 border-t border-slate-800/50">
-                {data.map((entry, index) => (
-                  <div key={index} className="flex items-center gap-2 text-xs text-gray-400">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                    <span>{entry.name}</span>
-                  </div>
-                ))}
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                  {data.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc' }}
+                  formatter={(value: number) => value.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex flex-wrap gap-4 justify-center mt-4">
+            {data.map((entry, index) => (
+              <div key={index} className="flex items-center gap-2 text-xs text-gray-400">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                <span>{entry.name}</span>
               </div>
-            )}
+            ))}
           </div>
         </div>
 

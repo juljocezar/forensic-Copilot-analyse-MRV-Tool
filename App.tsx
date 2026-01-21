@@ -1,5 +1,10 @@
+
 import React, { useState, useEffect, Suspense } from 'react';
-import { LayoutDashboard, FolderOpen, FileSearch, Settings as SettingsIcon, Download, Scale, Calculator as CalculatorIcon, Database, DollarSign, Network, ShieldCheck, FileText, HelpCircle } from 'lucide-react';
+import { 
+  LayoutDashboard, FolderOpen, FileSearch, Settings as SettingsIcon, 
+  Download, Scale, Calculator as CalculatorIcon, Database, DollarSign, Network, ShieldCheck, 
+  FileText, HelpCircle, Loader2, TrendingUp 
+} from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { DocumentList } from './components/DocumentList';
 import { Analyzer } from './components/Analyzer';
@@ -11,13 +16,14 @@ import { EntityGraph } from './components/EntityGraph';
 import { EvidenceVault } from './components/EvidenceVault';
 import { ReportView } from './components/ReportView';
 import { Documentation } from './components/Documentation';
+import { ROIDashboard } from './components/ROIDashboard';
 import { DocumentCase, ViewMode, DocEntry, AnalysisReport, AnalysisReportItem } from './types';
 import { dbService } from './services/db';
 import { costCalculator } from './services/cost-calculator-service';
-import { COMPLEXITY_FACTORS, RISK_FACTORS } from './types-cost-model';
+import { COMPLEXITY_FACTORS } from './types/cost-model';
 
-// Extended ViewMode type to include 'docs'
-type ExtendedViewMode = ViewMode | 'docs';
+// Extended ViewMode type to include 'docs' and 'roi'
+type ExtendedViewMode = ViewMode | 'docs' | 'roi';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ExtendedViewMode>('dashboard');
@@ -26,7 +32,6 @@ const App: React.FC = () => {
   const [calculatorData, setCalculatorData] = useState<DocEntry[]>([]);
   const [dbReady, setDbReady] = useState(false);
   const [selectedCase, setSelectedCase] = useState<DocumentCase | null>(null);
-  const [activeReport, setActiveReport] = useState<AnalysisReport | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -40,9 +45,6 @@ const App: React.FC = () => {
     loadData();
   }, []);
 
-  /**
-   * NEU: Erstellt detaillierte Kostenberechnung aus AnalysisResult
-   */
   const createCostBreakdown = (docCase: DocumentCase) => {
     if (!docCase.result) return null;
 
@@ -50,12 +52,9 @@ const App: React.FC = () => {
     const items = [];
 
     // 1. Tasks als Personalkosten interpretieren
-    if (result.tasks) {
+    if (result.tasks && result.tasks.length > 0) {
       for (const task of result.tasks) {
-        // JVEG-Level aus legalBasis extrahieren
         const jvegLevel = extractJVEGLevel(task.legalBasis || '');
-        
-        // Komplexitätsfaktor basierend auf complexityScore
         const complexityFactor = mapComplexityScore(result.complexityScore || 0);
 
         if (jvegLevel && task.unit && task.unit.includes('Stunden')) {
@@ -63,12 +62,12 @@ const App: React.FC = () => {
             task.name || 'Unbenannte Aufgabe',
             task.quantity || 0,
             jvegLevel,
-            0, // Kein extra Zuschlag (schon in rate enthalten)
+            0,
             complexityFactor
           );
           items.push(costItem);
         } else {
-          // Fallback: Generische Position
+          // Fallback
           const costItem = {
             id: `cost_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             name: task.name || 'Aufgabe',
@@ -77,31 +76,44 @@ const App: React.FC = () => {
             quantity: task.quantity || 0,
             unit: (task.unit || 'Stück') as any,
             unitPrice: task.rate || 0,
-            formula: undefined,
-            factors: [],
             subtotal: (task.quantity || 0) * (task.rate || 0),
             total: task.total || 0,
             legalBasis: task.legalBasis,
-            notes: task.formulaExplanation
+            notes: task.formulaExplanation,
+            factors: [],
+            variables: {}
           };
           items.push(costItem);
         }
       }
+    } else {
+      // Fallback wenn keine Tasks da sind: Pauschale generieren
+      items.push({
+        id: `cost_fallback_${Date.now()}`,
+        name: 'Dokumentenanalyse (Pauschal)',
+        description: 'Automatisch generierte Pauschale (keine spezifischen Tasks erkannt)',
+        category: 'Personnel' as const,
+        quantity: 1,
+        unit: 'Pauschale' as any,
+        unitPrice: 150,
+        subtotal: 150,
+        total: 150,
+        legalBasis: 'Schätzung',
+        factors: [],
+        variables: {}
+      });
     }
 
-    // 2. Gesamtkosten berechnen
     const costResult = costCalculator.calculateTotalCosts(items);
 
-    // 3. Wirtschaftlichkeits-Analyse wenn Objektwert vorhanden
     if (result.objectValue) {
       costResult.economicViability = costCalculator.evaluateEconomicViability(
         result.objectValue,
         costResult.finalTotal,
-        3.0 // ROI-Schwellenwert
+        3.0
       );
     }
 
-    // 4. Pro-Bono-Analyse wenn valueAnalysis vorhanden
     if (result.valueAnalysis) {
       const impactCategory = determineImpactCategory(result.legalContext || '');
       const hrImpact = mapHumanRightsImpact(result.legalContext || '');
@@ -109,9 +121,9 @@ const App: React.FC = () => {
       costResult.proBonoAnalysis = costCalculator.calculateProBonoValue(
         costResult.finalTotal,
         impactCategory,
-        1, // directBeneficiaries
-        0, // indirectBeneficiaries
-        'Medium', // precedentValue
+        1,
+        0,
+        'Medium',
         hrImpact
       );
     }
@@ -120,7 +132,6 @@ const App: React.FC = () => {
   };
 
   const handleAnalysisComplete = async (newCases: DocumentCase[]) => {
-    // NEU: Kostenmodell für jeden neuen Fall erstellen
     const casesWithCosts = newCases.map(docCase => {
       const costBreakdown = createCostBreakdown(docCase);
       if (costBreakdown && docCase.result) {
@@ -135,6 +146,24 @@ const App: React.FC = () => {
     setView('dashboard');
   };
 
+  // NEW: Handler for updates from the modal (Human-in-the-Loop)
+  const handleCaseUpdate = (updatedCase: DocumentCase) => {
+    // 1. Update Portfolio State
+    setPortfolio(prev => prev.map(c => c.id === updatedCase.id ? updatedCase : c));
+    
+    // 2. Update Selected Case State to reflect changes immediately in modal
+    setSelectedCase(updatedCase);
+    
+    // 3. Re-calculate Cost Breakdown automatically based on new tasks
+    const newCostModel = createCostBreakdown(updatedCase);
+    if (newCostModel && updatedCase.result) {
+        updatedCase.result.detailedCostBreakdown = newCostModel;
+        updatedCase.result.proBonoAnalysis = newCostModel.proBonoAnalysis;
+        // Save again with new costs
+        dbService.saveCase(updatedCase); 
+    }
+  };
+
   const deleteCase = async (id: string) => {
     setPortfolio(prev => prev.filter(c => c.id !== id));
     await dbService.deleteCase(id);
@@ -142,25 +171,33 @@ const App: React.FC = () => {
 
   /**
    * Transforms the current portfolio into an aggregated AnalysisReport
-   * compatible with the ReportView component.
    */
   const transformPortfolioToReport = (): AnalysisReport => {
-    const totalFees = portfolio.reduce((acc, c) => acc + (c.totalFees || 0), 0);
-    const avgRisk = portfolio.length > 0 
-      ? portfolio.reduce((acc, c) => acc + (c.result?.riskScore || 0), 0) / portfolio.length 
+    const completedCases = portfolio.filter(c => c.status === 'done' && c.result);
+    const totalFees = completedCases.reduce((acc, c) => acc + c.totalFees, 0);
+    const avgRisk = completedCases.length > 0 
+      ? completedCases.reduce((acc, c) => acc + (c.result?.riskScore || 0), 0) / completedCases.length 
       : 0;
     
-    // Flatten all tasks into report items
-    const items: AnalysisReportItem[] = portfolio.flatMap((c) => 
+    // Aggregations based on AnalysisResult fields
+    const proBonoValue = completedCases.reduce((acc, c) => acc + (c.result?.valueAnalysis?.proBonoValue || 0), 0);
+    const stateInternalCost = completedCases.reduce((acc, c) => acc + (c.result?.valueAnalysis?.stateCostComparison || 0), 0);
+    
+    // Calculate State Savings dynamically: ProBono - StateInternal
+    const stateSavings = proBonoValue - stateInternalCost;
+
+    const violationsCountTotal = completedCases.reduce((acc, c) => acc + (c.result?.huridocs?.violations?.length || 0), 0);
+
+    const items: AnalysisReportItem[] = completedCases.flatMap((c) => 
       (c.result?.tasks || []).map((t, i) => ({
         id: `${c.id}_${i}`,
         description: `${c.fileName}: ${t.name}`,
-        category: 'Personal', // German category
+        category: 'Personal',
         justification: t.reason || '',
-        quantity: t.quantity || 0,
-        unit: t.unit || 'Stück',
-        rate: t.rate || 0,
-        total: t.total || 0
+        quantity: t.quantity,
+        unit: t.unit,
+        rate: t.rate,
+        total: t.total
       }))
     );
 
@@ -171,114 +208,74 @@ const App: React.FC = () => {
       currency: "EUR",
       totalValue: totalFees,
       qualityScore: 95, 
-      executiveSummary: `Dieses Portfolio umfasst ${portfolio.length} analysierte Fälle mit einem Gesamtrisiko-Score von ${Math.round(avgRisk)}/100. Die Analyse erfolgte basierend auf JVEG/RVG, UNGPs und internationalen Menschenrechtsstandards.`,
+      executiveSummary: `Dieses Portfolio umfasst ${completedCases.length} analysierte Fälle mit einem Gesamtrisiko-Score von ${Math.round(avgRisk)}/100.`,
       items: items,
-      standardsUsed: ["JVEG 2025", "RVG", "HURIDOCS", "Istanbul Protocol", "UNGPs", "OECD"]
+      standardsUsed: ["JVEG 2025", "RVG", "HURIDOCS", "Istanbul Protocol", "UNGPs", "OECD"],
+      
+      portfolio: {
+        proBonoValue,
+        jvegReimbursable: totalFees,
+        stateSavings,
+        stateInternalCost,
+        violationsCountTotal,
+        mainRiskCategory: avgRisk > 60 ? "High Risk" : "Moderate Risk"
+      },
+      reportMeta: {
+        portfolioRiskScore: avgRisk
+      },
+      cases: completedCases.map(c => ({
+        caseId: c.id,
+        title: c.fileName,
+        leadingAuthority: 'HR-Certify',
+        certifiedValue: c.result?.valueAnalysis?.proBonoValue || 0,
+        socialImpact: c.result?.strategicAssessment?.socialValueStatement || '',
+        democraticContribution: c.result?.valueAnalysis?.democraticContribution || '',
+        targetAudiences: c.result?.strategicAssessment?.targetAudiences || [],
+        violationsByType: [], // simplified for report view
+        complianceMatrix: c.result?.complianceAnalysis?.map(ca => ({
+          framework: ca.standard,
+          indicator: ca.indicator,
+          status: ca.status,
+          finding: ca.finding
+        })) || [],
+        forensicCostBreakdown: c.result?.tasks?.map(t => ({
+          activity: t.name,
+          justification: t.reason,
+          legalBasis: t.legalBasis,
+          quantity: t.quantity,
+          unit: t.unit,
+          unitRate: t.rate,
+          total: t.total
+        })) || [],
+        jvegSum: c.totalFees,
+        chainOfCustody: c.fileHash || { hash: 'N/A', timestamp: '', algorithm: 'SHA-256', verified: false }
+      }))
     };
   };
 
-  const handleGenerateReportFromCalculator = (report: AnalysisReport) => {
-    setActiveReport(report);
-    setView('reports');
-  };
-
   const handleExport = () => {
-    // Unterscheidung: Exportieren wir das gesamte Portfolio oder einen spezifischen Report (z.B. Calculator)?
-    if (activeReport) {
-      exportSingleReport(activeReport);
-    } else {
-      exportPortfolioReport();
-    }
-  };
-
-  // Helper für Einzelreport Export
-  const exportSingleReport = (report: AnalysisReport) => {
-    const date = new Date(report.date).toLocaleDateString('de-DE');
+    // 1. Aggregierte Daten berechnen
+    const completedCases = portfolio.filter(c => c.status === 'done' && c.result);
     
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html lang="de">
-      <head>
-        <meta charset="UTF-8">
-        <title>${report.title}</title>
-        <style>
-          body { font-family: sans-serif; padding: 40px; color: #333; }
-          h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 10px; }
-          .meta { margin-bottom: 30px; font-size: 0.9em; color: #666; }
-          .summary { background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #e2e8f0; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.9em; }
-          th { text-align: left; background: #f1f5f9; padding: 10px; border-bottom: 2px solid #cbd5e1; }
-          td { padding: 10px; border-bottom: 1px solid #e2e8f0; }
-          .total-row { font-weight: bold; background: #eff6ff; font-size: 1.1em; }
-          .amount { text-align: right; font-family: monospace; }
-          .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; background: #e0e7ff; color: #3730a3; font-size: 0.8em; }
-        </style>
-      </head>
-      <body>
-        <h1>${report.title}</h1>
-        <div class="meta">
-          ID: ${report.id} <br>
-          Datum: ${date} <br>
-          Standards: ${report.standardsUsed.join(', ')}
-        </div>
+    if (completedCases.length === 0) {
+      alert("Keine abgeschlossenen Analysen zum Exportieren verfügbar.");
+      return;
+    }
 
-        <div class="summary">
-          <strong>Management Summary</strong><br>
-          ${report.executiveSummary}
-        </div>
-
-        <h2>Kostenaufstellung</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Position & Begründung</th>
-              <th>Menge</th>
-              <th style="text-align: right">Satz</th>
-              <th style="text-align: right">Gesamt</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${report.items.map(item => `
-              <tr>
-                <td>
-                  <strong>${item.description}</strong><br>
-                  <span style="color: #64748b; font-size: 0.9em;">${item.justification}</span>
-                  <span class="badge">${item.category}</span>
-                </td>
-                <td>${item.quantity} ${item.unit}</td>
-                <td class="amount">${item.rate.toLocaleString('de-DE', {minimumFractionDigits: 2})} €</td>
-                <td class="amount">${item.total.toLocaleString('de-DE', {minimumFractionDigits: 2})} €</td>
-              </tr>
-            `).join('')}
-            <tr class="total-row">
-              <td colspan="3" style="text-align: right">Gesamtsumme (Netto)</td>
-              <td class="amount">${report.totalValue.toLocaleString('de-DE', {minimumFractionDigits: 2})} €</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div style="margin-top: 40px; font-size: 0.8em; color: #94a3b8; text-align: center;">
-          Generiert mit HR-Certify Auditor • Digitale Signatur gültig
-        </div>
-      </body>
-      </html>
-    `;
-
-    downloadHtml(htmlContent, `Report_${report.id}.html`);
-  };
-
-  // Helper für Portfolio Export (Bestehende Logik, ausgelagert)
-  const exportPortfolioReport = () => {
-    const totalFees = portfolio.reduce((acc, c) => acc + (c.totalFees || 0), 0);
-    const totalProBonoValue = portfolio.reduce((acc, c) => 
-      acc + (c.result?.detailedCostBreakdown?.proBonoAnalysis?.proBonoValue || 0), 0
+    const totalFees = completedCases.reduce((acc, c) => acc + c.totalFees, 0);
+    const totalProBonoValue = completedCases.reduce((acc, c) => 
+      acc + (c.result?.valueAnalysis?.proBonoValue || 0), 0
     );
-    const avgRisk = portfolio.length > 0 
-      ? portfolio.reduce((acc, c) => acc + (c.result?.riskScore || 0), 0) / portfolio.length 
+    const totalSavings = completedCases.reduce((acc, c) => 
+      acc + ((c.result?.valueAnalysis?.proBonoValue || 0) - (c.result?.valueAnalysis?.stateCostComparison || 0)), 0
+    );
+    const avgRisk = completedCases.length > 0 
+      ? completedCases.reduce((acc, c) => acc + (c.result?.riskScore || 0), 0) / completedCases.length 
       : 0;
     
     const date = new Date().toLocaleDateString('de-DE');
     
+    // 2. High-Fidelity HTML Template
     const htmlContent = `
       <!DOCTYPE html>
       <html lang="de">
@@ -286,7 +283,7 @@ const App: React.FC = () => {
         <meta charset="UTF-8">
         <title>HR-Certify: Forensischer Prüfbericht</title>
         <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Courier+Prime&display=swap');
           
           :root {
             --primary: #2563eb;
@@ -319,8 +316,8 @@ const App: React.FC = () => {
           }
 
           @media print {
-            body { background: none; }
-            .page { margin: 0; box-shadow: none; width: 100%; height: auto; page-break-after: always; }
+            body { background: white; }
+            .page { margin: 0; box-shadow: none; width: 100%; height: auto; page-break-after: always; padding: 15mm; }
             .no-break { page-break-inside: avoid; }
           }
 
@@ -368,20 +365,74 @@ const App: React.FC = () => {
           table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
           th { text-align: left; background: #f1f5f9; padding: 8px; color: var(--secondary); font-weight: 600; border-bottom: 1px solid #cbd5e1; }
           td { padding: 8px; border-bottom: 1px solid var(--border); color: #334155; vertical-align: top; }
-          .amount { text-align: right; font-family: 'Courier New', monospace; font-weight: 600; }
+          .amount { text-align: right; font-family: 'Courier Prime', monospace; font-weight: 600; }
           
           /* Visualizations */
           .risk-meter { height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin-top: 5px; }
           .risk-fill { height: 100%; background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
           
-          .pestel-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
-          .pestel-item { font-size: 9px; padding: 6px; border-radius: 4px; border: 1px solid var(--border); }
-          .pestel-negative { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-          .pestel-positive { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+          /* --- CHAIN OF CUSTODY STAMP --- */
+          .custody-stamp { 
+            margin-top: 40px; 
+            padding: 15px; 
+            background: #f8fafc; 
+            border: 2px solid #94a3b8;
+            border-radius: 8px;
+            page-break-inside: avoid;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+          }
+          
+          .custody-icon {
+            font-size: 32px;
+            color: #475569;
+          }
 
-          .chain-of-custody { 
-            margin-top: 30px; padding: 10px; background: #f8fafc; 
-            border: 1px dashed #cbd5e1; font-family: monospace; font-size: 9px; color: #64748b; 
+          .custody-content {
+            flex: 1;
+          }
+
+          .custody-header {
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #1e293b;
+            margin-bottom: 4px;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #cbd5e1;
+            padding-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+          }
+
+          .custody-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 9px;
+            color: #64748b;
+            margin-top: 3px;
+          }
+
+          .custody-hash {
+            font-family: 'Courier Prime', monospace;
+            background: #e2e8f0;
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: #0f172a;
+            font-weight: bold;
+            font-size: 8px;
+            margin-top: 2px;
+            word-break: break-all;
+          }
+
+          .verified-badge {
+            color: #16a34a;
+            border: 1px solid #16a34a;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 8px;
+            font-weight: bold;
           }
 
         </style>
@@ -397,7 +448,7 @@ const App: React.FC = () => {
             <div class="meta">
               Bericht ID: ${Math.random().toString(36).substr(2, 9).toUpperCase()}<br>
               Datum: ${date}<br>
-              Umfang: ${portfolio.length} Akten
+              Umfang: ${completedCases.length} Akten
             </div>
           </div>
 
@@ -431,22 +482,17 @@ const App: React.FC = () => {
             <div class="box">
               <span class="box-title">Strategischer Impact</span>
               <p>
-                Das Portfolio umfasst ${portfolio.length} Fälle mit einem Gesamt-Objektwert von 
-                <strong>${portfolio.reduce((acc, c) => acc + (c.result?.objectValue || 0), 0).toLocaleString('de-DE')} €</strong>. 
+                Das Portfolio umfasst ${completedCases.length} Fälle mit einem Gesamt-Objektwert von 
+                <strong>${completedCases.reduce((acc, c) => acc + (c.result?.objectValue || 0), 0).toLocaleString('de-DE')} €</strong>. 
                 Durch die pro-bono geleistete Arbeit entsteht eine direkte Entlastung öffentlicher Haushalte (Staatseinsparung) 
-                in Höhe von ca. <strong>${(totalProBonoValue - totalFees).toLocaleString('de-DE')} €</strong>.
-              </p>
-              <p>
-                Die Analyse identifizierte ${portfolio.reduce((acc, c) => acc + (c.result?.huridocs?.violations?.length || 0), 0)} spezifische 
-                Menschenrechtsverletzungen nach HURIDOCS-Standard. Die vorherrschende Risikokategorie ist 
-                "${avgRisk > 60 ? 'Kritisch (Ius Cogens Implikationen)' : 'Signifikant'}".
+                in Höhe von ca. <strong>${totalSavings.toLocaleString('de-DE')} €</strong>.
               </p>
             </div>
           </div>
         </div>
 
         <!-- DOCUMENT PAGES -->
-        ${portfolio.map(c => `
+        ${completedCases.map(c => `
           <div class="page">
             <div class="header">
               <div class="logo" style="font-size: 16px;">
@@ -473,65 +519,76 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <!-- STRATEGIC ASSESSMENT -->
+            <!-- VALUE ANALYSIS BREAKDOWN -->
             <div class="no-break">
-              <h2>1. Strategische Einordnung & Impact</h2>
-              
-              <div class="box" style="background: #f8fafc;">
-                <span class="box-title">Strategische Kostenbegründung</span>
-                <p><em>"${c.result?.strategicAssessment?.costJustification || 'Keine Begründung verfügbar'}"</em></p>
+              <h2>Wertanalyse & Ökonomischer Impact</h2>
+              <table style="margin-bottom: 20px;">
+                <thead style="background: #f0fdf4;">
+                  <tr>
+                    <th>Position</th>
+                    <th style="text-align: right;">Wert</th>
+                    <th>Erläuterung</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Pro-Bono Marktwert</strong></td>
+                    <td class="amount">${(c.result?.valueAnalysis?.proBonoValue || 0).toLocaleString('de-DE')} €</td>
+                    <td><span style="font-size: 9px; color: #64748b;">Consulting-Standard (Shadow Price)</span></td>
+                  </tr>
+                  <tr>
+                    <td>Staatliche Vergleichskosten</td>
+                    <td class="amount">${(c.result?.valueAnalysis?.stateCostComparison || 0).toLocaleString('de-DE')} €</td>
+                    <td><span style="font-size: 9px; color: #64748b;">Kosten bei interner Bearbeitung</span></td>
+                  </tr>
+                  <tr>
+                    <td style="color: #15803d; font-weight: bold;">Netto-Staatseinsparung</td>
+                    <td class="amount" style="color: #15803d;">${((c.result?.valueAnalysis?.proBonoValue || 0) - (c.result?.valueAnalysis?.stateCostComparison || 0)).toLocaleString('de-DE')} €</td>
+                    <td><span style="font-size: 9px; color: #15803d;">Öffentliche Entlastung</span></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="box">
+                <span class="box-title">Demokratischer Beitrag</span>
+                <p><em>"${c.result?.valueAnalysis?.democraticContribution || 'Wird basierend auf rechtlichem Kontext ermittelt...'}"</em></p>
               </div>
+            </div>
 
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div class="box">
-                  <span class="box-title">Gesellschaftlicher Mehrwert</span>
-                  <p>${c.result?.strategicAssessment?.socialValueStatement || '-'}</p>
+            <!-- CERTIFICATION CRITERIA -->
+            <div class="no-break">
+              <h2>Zertifizierungskriterien & Compliance</h2>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                  <h3>Qualitäts-Audit</h3>
+                  <ul style="list-style: none; padding: 0;">
+                    ${c.result?.qualityAudit?.strengths?.map(s => `<li style="font-size: 10px; margin-bottom: 4px;">✅ ${s}</li>`).join('') || ''}
+                    ${c.result?.qualityAudit?.weaknesses?.map(w => `<li style="font-size: 10px; margin-bottom: 4px;">⚠️ ${w}</li>`).join('') || ''}
+                  </ul>
+                  <div style="margin-top: 10px; font-weight: bold; font-size: 11px;">Rating: ${c.result?.qualityAudit?.overallRating || 'N/A'}</div>
                 </div>
-                <div class="box">
-                  <span class="box-title">Zielgruppen & Relevanz</span>
-                  <div style="margin-top: 5px;">
-                    ${c.result?.strategicAssessment?.targetAudiences?.map(a => `<span class="badge badge-blue">${a}</span>`).join('') || '-'}
-                  </div>
+                <div>
+                  <h3>Compliance Matrix</h3>
+                  <table style="font-size: 9px;">
+                    <thead><tr><th>Standard</th><th>Status</th></tr></thead>
+                    <tbody>
+                      ${(c.result?.complianceAnalysis && c.result.complianceAnalysis.length > 0 
+                        ? c.result.complianceAnalysis 
+                        : [{ standard: 'ISO 26000', status: 'Pending' }, { standard: 'UNGPs', status: 'Pending' }]
+                      ).slice(0, 5).map(comp => `
+                        <tr>
+                          <td>${comp.standard}</td>
+                          <td><span class="badge ${comp.status === 'Fulfilled' ? 'badge-green' : comp.status === 'Partial' ? 'badge-blue' : 'badge-red'}">${comp.status}</span></td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
 
-            <!-- COMPLIANCE ANALYSIS (NEW) -->
-            ${c.result?.complianceAnalysis && c.result.complianceAnalysis.length > 0 ? `
-              <div class="no-break">
-                <h2>2. Compliance & Internationale Standards</h2>
-                <table>
-                  <thead>
-                    <tr>
-                      <th style="width: 25%">Standard</th>
-                      <th style="width: 20%">Indikator</th>
-                      <th style="width: 15%">Status</th>
-                      <th style="width: 40%">Ergebnis (Finding)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${c.result.complianceAnalysis.map(comp => `
-                      <tr>
-                        <td><strong>${comp.standard}</strong></td>
-                        <td>${comp.indicator}</td>
-                        <td>
-                          <span class="badge ${
-                            comp.status === 'Fulfilled' ? 'badge-green' : 
-                            comp.status === 'Partial' ? 'badge-blue' : 
-                            'badge-red'
-                          }">${comp.status}</span>
-                        </td>
-                        <td>${comp.finding}</td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>
-              </div>
-            ` : ''}
-
             <!-- COST BREAKDOWN -->
             <div class="no-break">
-              <h2>3. Forensische Kostenaufstellung (JVEG/RVG)</h2>
+              <h2>Forensische Kostenaufstellung (JVEG/RVG)</h2>
               <table>
                 <thead>
                   <tr>
@@ -550,7 +607,7 @@ const App: React.FC = () => {
                         <span style="color: #64748b; font-size: 9px;">${t.reason}</span>
                       </td>
                       <td><div class="badge badge-blue" style="font-size: 9px;">${t.legalBasis}</div></td>
-                      <td style="text-align: center;">${t.quantity} ${t.unit}</td>
+                      <td style="text-align: center;">${t.quantity.toFixed(2)} ${t.unit}</td>
                       <td class="amount">${t.rate.toFixed(2)} €</td>
                       <td class="amount">${t.total.toFixed(2)} €</td>
                     </tr>
@@ -563,35 +620,25 @@ const App: React.FC = () => {
               </table>
             </div>
 
-            <!-- ADVERSARIAL AUDIT FINDINGS (NEW) -->
-            ${c.result?.adversarialAudit && c.result.adversarialAudit.length > 0 ? `
-              <div class="no-break">
-                <h2 style="border-left-color: var(--danger); color: var(--danger);">4. Adversarial Audit & Robustness Check</h2>
-                <div class="box" style="border-left: 4px solid var(--danger);">
-                  <span class="box-title" style="color: var(--danger);">Devil's Advocate Analysis</span>
-                  <p>Die folgenden Punkte identifizieren potenzielle Schwachstellen in der Beweisführung, die vor Gericht oder in Verhandlungen adressiert werden müssen.</p>
+            <!-- CHAIN OF CUSTODY STAMP -->
+            <div class="custody-stamp no-break">
+              <div class="custody-icon">🛡️</div>
+              <div class="custody-content">
+                <div class="custody-header">
+                  <span>Chain of Custody Certificate</span>
+                  <span class="verified-badge">INTEGRITY VERIFIED</span>
                 </div>
-                ${c.result.adversarialAudit.map(finding => `
-                  <div style="margin-bottom: 15px; padding: 10px; background: #fff1f2; border: 1px solid #fecaca; border-radius: 6px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-                      <strong>${finding.argument}</strong>
-                      <span class="badge ${finding.severity === 'High' ? 'badge-red' : 'badge-yellow'}">${finding.severity} Risk</span>
-                    </div>
-                    <div style="font-size: 10px; color: #b91c1c; margin-bottom: 3px;">SCHWACHSTELLE:</div>
-                    <div style="font-size: 11px; margin-bottom: 8px; font-style: italic;">"${finding.weakness}"</div>
-                    <div style="font-size: 10px; color: #15803d; margin-bottom: 3px;">GEGENSTRATEGIE:</div>
-                    <div style="font-size: 11px;">${finding.counterStrategy}</div>
-                  </div>
-                `).join('')}
+                <div class="custody-row">
+                  <span>File Ingest: ${new Date(c.uploadDate).toISOString()}</span>
+                  <span>Algorithm: SHA-256</span>
+                </div>
+                <div class="custody-hash">
+                  ${c.fileHash?.hash || 'ERROR: NO HASH AVAILABLE - INTEGRITY COMPROMISED'}
+                </div>
+                <div style="font-size: 7px; color: #94a3b8; margin-top: 3px; text-align: center;">
+                  Dieser digitale Fingerabdruck garantiert die Unveränderlichkeit des Beweismittels zum Zeitpunkt der Analyse.
+                </div>
               </div>
-            ` : ''}
-
-            <!-- INTEGRITY FOOTER -->
-            <div class="chain-of-custody no-break">
-              <strong>⛓️ CHAIN OF CUSTODY / INTEGRITY CHECK</strong><br>
-              SHA-256 Hash: ${c.fileHash?.hash || 'N/A'}<br>
-              Zeitstempel: ${c.fileHash?.timestamp}<br>
-              Status: <span style="color: #16a34a">VERIFIED</span>
             </div>
 
           </div>
@@ -601,19 +648,14 @@ const App: React.FC = () => {
       </html>
     `;
 
-    downloadHtml(htmlContent, `HR-Certify_Portfolio_${new Date().toISOString().slice(0,10)}.html`);
-  };
-
-  const downloadHtml = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: 'text/html' });
+    const blob = new Blob([htmlContent], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `HR-Certify_Audit_Report_${new Date().toISOString().slice(0,10)}.html`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -630,69 +672,72 @@ const App: React.FC = () => {
              { id: 'analysis', icon: FileSearch, label: 'Analyse' },
              { id: 'calculator', icon: CalculatorIcon, label: 'Rechner' },
              { id: 'costs', icon: DollarSign, label: 'Kosten' },
+             { id: 'roi', icon: TrendingUp, label: 'SROI Modell' }, // NEW Navigation Item
              { id: 'intelligence', icon: Network, label: 'Beziehungen' }, 
              { id: 'vault', icon: ShieldCheck, label: 'Tresor' },
              { id: 'reports', icon: FileText, label: 'Berichte' },
-             { id: 'docs', icon: HelpCircle, label: 'Hilfe / Doku' } // Added Docs
+             { id: 'docs', icon: HelpCircle, label: 'Hilfe / Doku' }
            ].map(item => (
-             <button key={item.id} onClick={() => { setView(item.id as ExtendedViewMode); setActiveReport(null); }} className={`px-4 py-1.5 rounded-md text-sm flex items-center gap-2 whitespace-nowrap ${view === item.id ? 'bg-slate-800 text-blue-400' : 'text-gray-400 hover:text-white transition-colors'}`}>
+             <button key={item.id} onClick={() => setView(item.id as ExtendedViewMode)} className={`px-4 py-1.5 rounded-md text-sm flex items-center gap-2 whitespace-nowrap ${view === item.id ? 'bg-slate-800 text-blue-400' : 'text-gray-400'}`}>
                <item.icon size={14} />
                {item.label}
              </button>
            ))}
         </nav>
         <div className="flex gap-2">
-            <button onClick={() => setIsSettingsOpen(true)} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><SettingsIcon size={20}/></button>
-            <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm"><Download size={16}/> Report (HTML)</button>
+            <button onClick={() => setIsSettingsOpen(true)} className="p-2 hover:bg-slate-800 rounded-full"><SettingsIcon size={20}/></button>
+            <button onClick={handleExport} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm"><Download size={16}/> Report</button>
         </div>
       </header>
 
       <main className="flex-1 overflow-hidden relative">
-        <Suspense fallback={<div className="flex items-center justify-center h-full text-slate-500">Lade...</div>}>
+        <Suspense fallback={<div className="flex items-center justify-center h-full text-slate-500">Lade Komponente...</div>}>
           {view === 'dashboard' && <Dashboard cases={portfolio} />}
           {view === 'cases' && <DocumentList cases={portfolio} onDelete={deleteCase} onView={setSelectedCase} />}
           {view === 'analysis' && <Analyzer onAnalysisComplete={handleAnalysisComplete} />}
-          {view === 'calculator' && <Calculator data={calculatorData} setData={setCalculatorData} onGenerateReport={handleGenerateReportFromCalculator} />}
+          {view === 'calculator' && <Calculator data={calculatorData} setData={setCalculatorData} />}
           {view === 'intelligence' && <EntityGraph cases={portfolio} />}
           {view === 'vault' && <EvidenceVault cases={portfolio} />}
-          {view === 'docs' && <Documentation />} {/* Added Docs Render */}
+          {view === 'docs' && <Documentation />}
+          {view === 'roi' && <ROIDashboard />} {/* Render new component */}
           {view === 'reports' && (
             <ReportView 
-              report={activeReport || transformPortfolioToReport()} 
-              onBack={() => setView(activeReport ? 'calculator' : 'dashboard')}
+              report={transformPortfolioToReport()} 
+              onBack={() => setView('dashboard')}
               onExport={handleExport}
             />
           )}
           {view === 'costs' && (
             <div className="p-4 overflow-y-auto h-full pb-20 custom-scrollbar">
-              <h2 className="text-2xl font-bold mb-6 text-white text-center">Kostenmodellierung</h2>
-              
+              <h2 className="text-2xl font-bold mb-6 text-white">Detaillierte Kostenmodellierung</h2>
               {portfolio.filter(c => c.result?.detailedCostBreakdown).length === 0 && (
                 <div className="text-center text-gray-500 py-12">
                   <DollarSign size={64} className="mx-auto mb-4 opacity-20" />
                   <p>Noch keine Kostenmodelle vorhanden.</p>
-                  <p className="text-sm mt-2">Analysieren Sie Dokumente, um automatisch Kostenmodelle zu erstellen.</p>
                 </div>
               )}
-
-              {portfolio.filter(c => c.result?.detailedCostBreakdown).map(c => (
-                  <div key={c.id} className="mb-8 max-w-4xl mx-auto">
-                    <h3 className="text-xl font-semibold mb-4 text-blue-400">{c.fileName}</h3>
-                    <CostBreakdown result={c.result!.detailedCostBreakdown!} readOnly={true} />
+              {portfolio
+                .filter(c => c.result?.detailedCostBreakdown)
+                .map(c => (
+                  <div key={c.id} className="mb-8">
+                    <h3 className="text-xl font-semibold mb-4 text-white">{c.fileName}</h3>
+                    <CostBreakdown
+                      result={c.result!.detailedCostBreakdown!}
+                      readOnly={true}
+                    />
                   </div>
-              ))}
+                ))}
             </div>
           )}
         </Suspense>
       </main>
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-      {selectedCase && <CaseDetailsModal docCase={selectedCase} allCases={portfolio} onClose={() => setSelectedCase(null)} />}
+      {selectedCase && <CaseDetailsModal docCase={selectedCase} allCases={portfolio} onClose={() => setSelectedCase(null)} onCaseUpdate={handleCaseUpdate} />}
     </div>
   );
 };
 
-// ... Helper Functions ...
 function extractJVEGLevel(legalBasis: string): 'M1' | 'M2' | 'M3' | 'M4' | null {
   if (legalBasis?.includes('M1')) return 'M1';
   if (legalBasis?.includes('M2')) return 'M2';
@@ -702,7 +747,7 @@ function extractJVEGLevel(legalBasis: string): 'M1' | 'M2' | 'M3' | 'M4' | null 
 }
 
 function mapComplexityScore(score: number) {
-  if (score >= 80) return COMPLEXITY_FACTORS.VERY_HIGH;
+  if (score >= 80) return COMPLEXITY_FACTORS.VERY_HIGH; 
   if (score >= 60) return COMPLEXITY_FACTORS.HIGH;
   if (score >= 40) return COMPLEXITY_FACTORS.MEDIUM;
   return COMPLEXITY_FACTORS.LOW;
@@ -712,14 +757,14 @@ function determineImpactCategory(legalContext: string): 'Privat' | 'Öffentliche
   const lower = (legalContext || '').toLowerCase();
   if (lower.includes('ius cogens') || lower.includes('völkerstrafrecht')) return 'Ius Cogens Violation';
   if (lower.includes('systemisch') || lower.includes('strukturell')) return 'Systemische Bedeutung';
-  if (lower.includes('öffentlich') || lower.includes('gemeinnützig')) return 'Öffentliches Interesse';
+  if (lower.includes('öffentlich') || lower.includes('public interest')) return 'Öffentliches Interesse';
   return 'Privat';
 }
 
 function mapHumanRightsImpact(legalContext: string): 'Minor' | 'Moderate' | 'Significant' | 'Critical' {
   const lower = (legalContext || '').toLowerCase();
   if (lower.includes('folter') || lower.includes('genozid')) return 'Critical';
-  if (lower.includes('menschenrecht') && (lower.includes('schwer') || lower.includes('massiv'))) return 'Significant';
+  if (lower.includes('menschenrecht') && (lower.includes('schwer'))) return 'Significant';
   if (lower.includes('menschenrecht')) return 'Moderate';
   return 'Minor';
 }
